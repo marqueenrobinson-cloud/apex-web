@@ -86,8 +86,8 @@
   </div>
 
   <div class="card upgrade">
-    <h2>Unlimited access <span class="soon">SOON</span></h2>
-    <p>Pay by card for unlimited briefs — no crypto needed. Coming next.</p>
+    <h2>Unlimited access</h2>
+    <p>One-time $9 for unlimited briefs — no crypto needed, pay by card. The button above unlocks it after your free briefs.</p>
   </div>
 
   <div class="card upgrade">
@@ -101,9 +101,55 @@
   // ⬇️ IMPORTANT: replace this with YOUR live Railway URL (no trailing slash).
   const API = "https://web-production-8a4a.up.railway.app";
 
+  const FREE_LIMIT = 3;
+
   const input = document.getElementById("sym");
   const btn = document.getElementById("go");
   const out = document.getElementById("out");
+
+  function isPaid() { return localStorage.getItem("apexPaid") === "true"; }
+  function briefsUsed() { return parseInt(localStorage.getItem("apexUsed") || "0", 10); }
+  function setUsed(n) { localStorage.setItem("apexUsed", String(n)); }
+
+  // If they just came back from Stripe (?paid=SESSION_ID), verify and unlock.
+  async function checkReturnFromStripe() {
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get("paid");
+    if (!sid) return;
+    try {
+      const res = await fetch(API + "/verify?session_id=" + encodeURIComponent(sid));
+      const data = await res.json();
+      if (data.paid) {
+        localStorage.setItem("apexPaid", "true");
+        out.className = "out show";
+        out.textContent = "✓ Payment confirmed — you now have unlimited access. Enjoy.";
+      }
+    } catch (e) { /* ignore */ }
+    // Clean the ?paid=... out of the address bar.
+    window.history.replaceState({}, "", window.location.pathname);
+    render();
+  }
+
+  // Show either the input, or the pay button once the free limit is hit.
+  function render() {
+    if (isPaid() || briefsUsed() < FREE_LIMIT) {
+      btn.textContent = "Get brief";
+      input.disabled = false;
+      btn.onclick = getBrief;
+      if (!isPaid()) {
+        document.querySelector(".hint").textContent =
+          "Free demo — " + (FREE_LIMIT - briefsUsed()) + " of " + FREE_LIMIT + " left.";
+      } else {
+        document.querySelector(".hint").textContent = "Unlimited access — thanks for supporting APEX.";
+      }
+    } else {
+      input.disabled = true;
+      btn.textContent = "Get unlimited — $9";
+      btn.onclick = startCheckout;
+      document.querySelector(".hint").textContent =
+        "You've used your free briefs. Unlock unlimited for a one-time $9.";
+    }
+  }
 
   async function getBrief() {
     const sym = input.value.trim();
@@ -118,18 +164,41 @@
       if (!res.ok) throw new Error("Server returned " + res.status);
       const data = await res.json();
       out.textContent = data.brief || "No brief came back.";
+      if (!isPaid()) setUsed(briefsUsed() + 1);
     } catch (e) {
       out.innerHTML = '<span class="err">Something went wrong: ' + e.message +
         '. Check that the API URL in this page matches your live server.</span>';
     } finally {
       btn.disabled = false;
+      render();
     }
   }
 
-  btn.addEventListener("click", getBrief);
+  async function startCheckout() {
+    btn.disabled = true;
+    btn.textContent = "Opening checkout…";
+    try {
+      const res = await fetch(API + "/create-checkout", { method: "POST" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;  // send them to Stripe
+      } else {
+        throw new Error("No checkout URL");
+      }
+    } catch (e) {
+      out.className = "out show";
+      out.innerHTML = '<span class="err">Couldn\u2019t start checkout: ' + e.message + '</span>';
+      btn.disabled = false;
+      render();
+    }
+  }
+
   input.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") getBrief();
+    if (e.key === "Enter" && !input.disabled) getBrief();
   });
+
+  checkReturnFromStripe();
+  render();
 </script>
 </body>
 </html>
