@@ -160,7 +160,7 @@
     out.textContent = "Thinking…";
 
     try {
-      const res = await fetch(API + "/demo?symbol=" + encodeURIComponent(sym));
+      const API = "https://web-production-8a4a.up.railway.app";
       if (!res.ok) throw new Error("Server returned " + res.status);
       const data = await res.json();
       out.textContent = data.brief || "No brief came back.";
