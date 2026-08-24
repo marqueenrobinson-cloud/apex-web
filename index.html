@@ -67,6 +67,12 @@
   .soon { display: inline-block; font-size: 11px; letter-spacing: 1px;
     background: #1E345F; color: #9CC0FF; padding: 3px 8px; border-radius: 6px; margin-left: 8px; }
   .err { color: #FF8A8A; }
+  .price {
+    margin-top: 12px;
+    font-size: 15px;
+    color: #9CC0FF;
+  }
+  .price b { color: #FFFFFF; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -93,12 +99,12 @@
   <div class="card upgrade">
     <h2>Hold $APEX <span class="soon">SOON</span></h2>
     <p>Hold enough $APEX in your wallet and briefs are free, forever. Connect wallet — coming next.</p>
+    <div id="price" class="price">$APEX price: loading…</div>
   </div>
 
 </div>
 
 <script>
-  // ⬇️ IMPORTANT: replace this with YOUR live Railway URL (no trailing slash).
   const API = "https://web-production-8a4a.up.railway.app";
 
   const FREE_LIMIT = 3;
@@ -106,12 +112,27 @@
   const input = document.getElementById("sym");
   const btn = document.getElementById("go");
   const out = document.getElementById("out");
+  const priceEl = document.getElementById("price");
 
   function isPaid() { return localStorage.getItem("apexPaid") === "true"; }
   function briefsUsed() { return parseInt(localStorage.getItem("apexUsed") || "0", 10); }
   function setUsed(n) { localStorage.setItem("apexUsed", String(n)); }
 
-  // If they just came back from Stripe (?paid=SESSION_ID), verify and unlock.
+  // Live $APEX price in the Hold card.
+  async function loadPrice() {
+    try {
+      const res = await fetch(API + "/token-price");
+      const data = await res.json();
+      if (data.ok && typeof data.price_usd === "number") {
+        priceEl.innerHTML = "$APEX price: <b>$" + data.price_usd.toFixed(10).replace(/0+$/, "") + "</b>";
+      } else {
+        priceEl.textContent = "$APEX price: not trading yet";
+      }
+    } catch (e) {
+      priceEl.textContent = "$APEX price: unavailable right now";
+    }
+  }
+
   async function checkReturnFromStripe() {
     const params = new URLSearchParams(window.location.search);
     const sid = params.get("paid");
@@ -125,12 +146,10 @@
         out.textContent = "✓ Payment confirmed — you now have unlimited access. Enjoy.";
       }
     } catch (e) { /* ignore */ }
-    // Clean the ?paid=... out of the address bar.
     window.history.replaceState({}, "", window.location.pathname);
     render();
   }
 
-  // Show either the input, or the pay button once the free limit is hit.
   function render() {
     if (isPaid() || briefsUsed() < FREE_LIMIT) {
       btn.textContent = "Get brief";
@@ -181,7 +200,7 @@
       const res = await fetch(API + "/create-checkout", { method: "POST" });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;  // send them to Stripe
+        window.location.href = data.url;
       } else {
         throw new Error("No checkout URL");
       }
@@ -199,6 +218,7 @@
 
   checkReturnFromStripe();
   render();
+  loadPrice();
 </script>
 </body>
 </html>
