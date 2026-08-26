@@ -73,6 +73,37 @@
     color: #9CC0FF;
   }
   .price b { color: #FFFFFF; font-weight: 700; }
+
+  .market {
+    border: 1px solid #1E345F;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .market:hover, .market:active { border-color: #1A6BFF; }
+  .market .q { font-size: 15px; color: #E9EEFB; line-height: 1.4; }
+  .market .odds {
+    margin-top: 8px; font-size: 13px; color: #7FA6E8;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .market .crowd b { color: #FFFFFF; }
+  .read {
+    margin-top: 10px; padding-top: 12px;
+    border-top: 1px solid #1E345F;
+    font-size: 14px; line-height: 1.6; color: #CFE0FF;
+    white-space: pre-wrap; display: none;
+  }
+  .read.show { display: block; }
+  .gap {
+    display: inline-block; margin-left: 8px; padding: 2px 8px;
+    border-radius: 6px; font-size: 12px; font-weight: 700;
+  }
+  .gap.up { background: #103a24; color: #6EE7A0; }
+  .gap.down { background: #3a1018; color: #FF8A8A; }
+  .gap.none { background: #1E345F; color: #9CC0FF; }
+  .mkt-loading { color: #6E8FCB; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -89,6 +120,15 @@
     </div>
     <div class="hint">Free demo. One clear 4-part brief: Snapshot, Numbers, Risk Check, Bottom Line.</div>
     <div id="out" class="out"></div>
+  </div>
+
+  <div class="card">
+    <h2>Prediction markets <span class="soon">LIVE</span></h2>
+    <div class="hint" style="margin-top:0;margin-bottom:14px;">
+      What the crowd thinks vs. what APEX thinks. Tap a market for APEX's read.
+      Analysis only — place any bets on the venue of your choice.
+    </div>
+    <div id="markets"><div class="mkt-loading">Loading live markets…</div></div>
   </div>
 
   <div class="card upgrade">
@@ -218,6 +258,82 @@
 
   checkReturnFromStripe();
   render();
+
+  // ---- Prediction markets ----
+  const marketsEl = document.getElementById("markets");
+
+  async function loadMarkets() {
+    try {
+      const res = await fetch(API + "/markets");
+      const data = await res.json();
+      const list = (data.markets || []).filter(m => m.question && m.yes_percent != null);
+      if (!list.length) { marketsEl.innerHTML = '<div class="mkt-loading">No live markets right now.</div>'; return; }
+      marketsEl.innerHTML = "";
+      list.forEach(m => {
+        const div = document.createElement("div");
+        div.className = "market";
+        div.innerHTML =
+          '<div class="q">' + escapeHtml(m.question) + '</div>' +
+          '<div class="odds"><span class="crowd">Crowd: <b>' + m.yes_percent + '% YES</b></span>' +
+          '<span class="tap">Tap for APEX read →</span></div>' +
+          '<div class="read"></div>';
+        div.querySelector(".q").onclick = () => toggleRead(div, m);
+        div.querySelector(".odds").onclick = () => toggleRead(div, m);
+        marketsEl.appendChild(div);
+      });
+    } catch (e) {
+      marketsEl.innerHTML = '<div class="mkt-loading">Couldn\u2019t load markets right now.</div>';
+    }
+  }
+
+  async function toggleRead(div, m) {
+    const readEl = div.querySelector(".read");
+    if (readEl.classList.contains("show") && readEl.dataset.loaded === "1") {
+      readEl.classList.remove("show"); return;
+    }
+    readEl.classList.add("show");
+    if (readEl.dataset.loaded === "1") return;
+    readEl.textContent = "APEX is reading this market…";
+    try {
+      const url = API + "/market-read?question=" + encodeURIComponent(m.question) +
+                  "&yes_percent=" + encodeURIComponent(m.yes_percent);
+      const res = await fetch(url);
+      const data = await res.json();
+      const raw = data.read || "No read came back.";
+      readEl.innerHTML = formatRead(raw, m.yes_percent);
+      readEl.dataset.loaded = "1";
+    } catch (e) {
+      readEl.textContent = "Couldn't get APEX's read right now.";
+    }
+  }
+
+  // Pull the CALL json out, show the crowd-vs-APEX gap as a badge, hide raw json.
+  function formatRead(raw, crowdPct) {
+    let body = raw, badge = "";
+    const idx = raw.indexOf("CALL:");
+    if (idx !== -1) {
+      body = raw.slice(0, idx).trim();
+      const jsonPart = raw.slice(idx + 5).trim();
+      try {
+        const call = JSON.parse(jsonPart);
+        const apex = Math.round((call.apex_prob || 0) * 100);
+        const crowd = Math.round(crowdPct);
+        const diff = apex - crowd;
+        let cls = "none", txt = "market looks efficient";
+        if (call.lean === "yes") { cls = "up"; txt = "APEX leans YES (" + apex + "% vs " + crowd + "%)"; }
+        else if (call.lean === "no") { cls = "down"; txt = "APEX leans NO (" + apex + "% vs " + crowd + "%)"; }
+        badge = '<div style="margin-top:10px;"><span class="gap ' + cls + '">' + txt + '</span></div>';
+      } catch (e) { /* leave body as-is */ }
+    }
+    return escapeHtml(body).replace(/\n/g, "<br>") + badge;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  loadMarkets();
+
   loadPrice();
 </script>
 </body>
