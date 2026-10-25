@@ -48,6 +48,7 @@
     cursor: pointer;
   }
   button:disabled { opacity: 0.5; cursor: default; }
+  button.ghost { background: transparent; border: 1px solid #2A477F; color: #9CC0FF; }
   .hint { color: #6E8FCB; font-size: 13px; margin-top: 10px; }
   .out {
     margin-top: 18px;
@@ -64,6 +65,7 @@
   .upgrade { border-style: dashed; opacity: 0.85; }
   .upgrade h2 { color: #7FA6E8; }
   .upgrade p { color: #93AEE0; font-size: 14px; line-height: 1.6; }
+  .holdcard p { color: #93AEE0; font-size: 14px; line-height: 1.6; }
   .soon { display: inline-block; font-size: 11px; letter-spacing: 1px;
     background: #1E345F; color: #9CC0FF; padding: 3px 8px; border-radius: 6px; margin-left: 8px; }
   .err { color: #FF8A8A; }
@@ -73,6 +75,9 @@
     color: #9CC0FF;
   }
   .price b { color: #FFFFFF; font-weight: 700; }
+  #wbtn { margin-top: 14px; width: 100%; }
+  #wmsg { margin-top: 12px; font-size: 13px; line-height: 1.5; color: #9CC0FF; }
+  #wlinks a { display: block; margin-top: 8px; color: #7FA6E8; font-size: 14px; }
 
   .market {
     border: 1px solid #1E345F;
@@ -118,7 +123,7 @@
       <input id="sym" placeholder="Type a ticker or coin (NVDA, BTC)" autocomplete="off" />
       <button id="go">Get brief</button>
     </div>
-    <div class="hint">Free demo. One clear 4-part brief: Snapshot, Numbers, Risk Check, Bottom Line.</div>
+    <div class="hint" id="mainHint">Free demo. One clear 4-part brief: Snapshot, Numbers, Risk Check, Bottom Line.</div>
     <div id="out" class="out"></div>
   </div>
 
@@ -136,9 +141,12 @@
     <p>One-time $9 for unlimited briefs — no crypto needed, pay by card. The button above unlocks it after your free briefs.</p>
   </div>
 
-  <div class="card upgrade">
-    <h2>Hold $APEX <span class="soon">SOON</span></h2>
-    <p>Hold enough $APEX in your wallet and briefs are free, forever. Connect wallet — coming next.</p>
+  <div class="card holdcard">
+    <h2>Hold $APEX <span class="soon">LIVE</span></h2>
+    <p>Hold enough $APEX on Base and briefs are free, forever. Connect your wallet and sign a short message. It's free and sends no transaction.</p>
+    <button id="wbtn">Connect wallet</button>
+    <div id="wmsg"></div>
+    <div id="wlinks"></div>
     <div id="price" class="price">$APEX price: loading…</div>
   </div>
 
@@ -148,15 +156,24 @@
   const API = "https://web-production-8a4a.up.railway.app";
 
   const FREE_LIMIT = 3;
+  const SIGN_REFRESH_MS = 4 * 60 * 1000; // server accepts a signature for 5 minutes
 
   const input = document.getElementById("sym");
   const btn = document.getElementById("go");
   const out = document.getElementById("out");
   const priceEl = document.getElementById("price");
+  const mainHint = document.getElementById("mainHint");
+  const wbtn = document.getElementById("wbtn");
+  const wmsg = document.getElementById("wmsg");
+  const wlinks = document.getElementById("wlinks");
+
+  let holder = null; // { addr, message, sig, ts, ok }  ok: null = unknown, true = holds enough, false = does not
 
   function isPaid() { return localStorage.getItem("apexPaid") === "true"; }
   function briefsUsed() { return parseInt(localStorage.getItem("apexUsed") || "0", 10); }
   function setUsed(n) { localStorage.setItem("apexUsed", String(n)); }
+  function holderOpen() { return holder && holder.ok !== false; }
+  function shortAddr(a) { return a.slice(0, 6) + "…" + a.slice(-4); }
 
   // Live $APEX price in the Hold card.
   async function loadPrice() {
@@ -173,7 +190,7 @@
     }
   }
 
-    async function checkReturnFromStripe() {
+  async function checkReturnFromStripe() {
     const params = new URLSearchParams(window.location.search);
     const sid = params.get("paid");
     if (!sid) return;
@@ -189,37 +206,154 @@
     } catch (e) { /* ignore */ }
     window.history.replaceState({}, "", window.location.pathname);
     render();
-    }
+  }
 
   function render() {
-    if (isPaid() || briefsUsed() < FREE_LIMIT) {
+    if (isPaid() || holderOpen() || briefsUsed() < FREE_LIMIT) {
       btn.textContent = "Get brief";
       input.disabled = false;
       btn.onclick = getBrief;
-      if (!isPaid()) {
-        document.querySelector(".hint").textContent =
-          "Free demo — " + (FREE_LIMIT - briefsUsed()) + " of " + FREE_LIMIT + " left.";
+      if (isPaid()) {
+        mainHint.textContent = "Unlimited access — thanks for supporting APEX.";
+      } else if (holderOpen()) {
+        mainHint.textContent = "Wallet connected — free briefs if it holds enough $APEX.";
       } else {
-        document.querySelector(".hint").textContent = "Unlimited access — thanks for supporting APEX.";
+        mainHint.textContent = "Free demo — " + (FREE_LIMIT - briefsUsed()) + " of " + FREE_LIMIT + " left.";
       }
     } else {
       input.disabled = true;
       btn.textContent = "Get unlimited — $9";
       btn.onclick = startCheckout;
-      document.querySelector(".hint").textContent =
-        "You've used your free briefs. Unlock unlimited for a one-time $9.";
+      mainHint.textContent = "You've used your free briefs. Unlock unlimited for a one-time $9, or connect a wallet that holds $APEX.";
     }
   }
 
-    async function getBrief() {
+  // ---- Wallet (holders) ----
+  function getProvider() {
+    return window.ethereum || (window.phantom && window.phantom.ethereum) || null;
+  }
+
+  function toHex(str) {
+    return "0x" + Array.from(new TextEncoder().encode(str))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function signHolder(addr) {
+    const prov = getProvider();
+    const message = "APEX access\nWallet: " + addr + "\nTime: " + Date.now();
+    const sig = await prov.request({ method: "personal_sign", params: [toHex(message), addr] });
+    holder = { addr: addr, message: message, sig: sig, ts: Date.now(), ok: holder ? holder.ok : null };
+  }
+
+  async function holderHeaders() {
+    if (!holder) return null;
+    if (Date.now() - holder.ts > SIGN_REFRESH_MS) await signHolder(holder.addr);
+    return {
+      "X-Wallet-Address": holder.addr,
+      "X-Wallet-Message": encodeURIComponent(holder.message),
+      "X-Wallet-Signature": holder.sig
+    };
+  }
+
+  function showWalletLinks() {
+    const here = window.location.href;
+    const noProto = window.location.host + window.location.pathname;
+    wlinks.innerHTML = "";
+    const a1 = document.createElement("a");
+    a1.href = "https://metamask.app.link/dapp/" + noProto;
+    a1.textContent = "Open in MetaMask ↗";
+    const a2 = document.createElement("a");
+    a2.href = "https://phantom.app/ul/browse/" + encodeURIComponent(here) + "?ref=" + encodeURIComponent(window.location.origin);
+    a2.textContent = "Open in Phantom ↗";
+    wlinks.appendChild(a1);
+    wlinks.appendChild(a2);
+  }
+
+  async function connectWallet() {
+    wlinks.innerHTML = "";
+    const prov = getProvider();
+    if (!prov) {
+      wmsg.textContent = "No wallet found in this browser. Open this page inside your wallet app's browser:";
+      showWalletLinks();
+      return;
+    }
+    wbtn.disabled = true;
+    wmsg.textContent = "Approve the connection in your wallet…";
+    try {
+      const accts = await prov.request({ method: "eth_requestAccounts" });
+      if (!accts || !accts[0]) throw new Error("No account");
+      wmsg.textContent = "Sign the message in your wallet. It's free and sends no transaction…";
+      await signHolder(accts[0]);
+      holder.ok = null;
+      wbtn.textContent = "Disconnect " + shortAddr(holder.addr);
+      wbtn.className = "ghost";
+      wbtn.onclick = disconnectWallet;
+      wmsg.textContent = "Wallet connected. Enter a ticker above and tap Get brief. It's free if this wallet holds enough $APEX on Base.";
+      render();
+    } catch (e) {
+      holder = null;
+      wmsg.textContent = "Wallet connection was cancelled or failed. Try again.";
+    } finally {
+      wbtn.disabled = false;
+    }
+  }
+
+  function disconnectWallet() {
+    holder = null;
+    wbtn.textContent = "Connect wallet";
+    wbtn.className = "";
+    wbtn.onclick = connectWallet;
+    wmsg.textContent = "Wallet disconnected.";
+    wlinks.innerHTML = "";
+    render();
+  }
+
+  function fmtNum(x) {
+    const n = Number(x);
+    return isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(x);
+  }
+
+  async function getBrief() {
     const sym = input.value.trim();
     if (!sym) { input.focus(); return; }
 
     btn.disabled = true;
     out.className = "out show";
     out.textContent = "Thinking…";
+    let note = "";
 
     try {
+      // 1) Holder route, if a wallet is connected and not already known to be short
+      if (holderOpen()) {
+        try {
+          const h = await holderHeaders();
+          const hr = await fetch(API + "/brief/holder?symbol=" + encodeURIComponent(sym), { headers: h });
+          if (hr.ok) {
+            const hd = await hr.json();
+            holder.ok = true;
+            out.textContent = hd.brief || "No brief came back.";
+            return;
+          }
+          let hj = {};
+          try { hj = await hr.json(); } catch (e) {}
+          const d = hj.detail || {};
+          if (hr.status === 402) {
+            holder.ok = false;
+            note = "This wallet holds " + fmtNum(d.your_balance) + " $APEX. It needs " +
+                   fmtNum(d.required) + " for free briefs, so this one used your free demo.\n\n";
+            wmsg.textContent = "Not enough $APEX in " + shortAddr(holder.addr) + " yet.";
+          } else if (hr.status === 429) {
+            out.textContent = typeof d === "string" ? d : "Daily holder limit reached. Try again tomorrow.";
+            return;
+          } else {
+            note = "Couldn't verify the wallet, so this one used your free demo.\n\n";
+          }
+        } catch (e) {
+          note = "Wallet signing was cancelled, so this one used your free demo.\n\n";
+        }
+      }
+
+      // 2) Free demo / paid card route
       const sid = localStorage.getItem("apexSession");
       const res = await fetch(API + "/demo?symbol=" + encodeURIComponent(sym), {
         headers: sid ? { "X-Session-Id": sid } : {}
@@ -227,12 +361,12 @@
       if (res.status === 429 || res.status === 503) {
         let msg = "You've hit today's limit. Try again tomorrow.";
         try { const j = await res.json(); if (j.detail) msg = j.detail; } catch (e) {}
-        out.textContent = msg;
+        out.textContent = note + msg;
         return;
       }
       if (!res.ok) throw new Error("Server returned " + res.status);
       const data = await res.json();
-      out.textContent = data.brief || "No brief came back.";
+      out.textContent = note + (data.brief || "No brief came back.");
       if (!isPaid()) setUsed(briefsUsed() + 1);
     } catch (e) {
       out.innerHTML = '<span class="err">Something went wrong: ' + e.message +
@@ -241,7 +375,7 @@
       btn.disabled = false;
       render();
     }
-    }
+  }
 
   async function startCheckout() {
     btn.disabled = true;
@@ -265,6 +399,8 @@
   input.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !input.disabled) getBrief();
   });
+
+  wbtn.onclick = connectWallet;
 
   checkReturnFromStripe();
   render();
@@ -308,6 +444,10 @@
       const url = API + "/market-read?question=" + encodeURIComponent(m.question) +
                   "&yes_percent=" + encodeURIComponent(m.yes_percent);
       const res = await fetch(url);
+      if (res.status === 429 || res.status === 503) {
+        readEl.textContent = "APEX reads are maxed out for today. Come back tomorrow.";
+        return;
+      }
       const data = await res.json();
       const raw = data.read || "No read came back.";
       readEl.innerHTML = formatRead(raw, m.yes_percent);
@@ -328,7 +468,6 @@
         const call = JSON.parse(jsonPart);
         const apex = Math.round((call.apex_prob || 0) * 100);
         const crowd = Math.round(crowdPct);
-        const diff = apex - crowd;
         let cls = "none", txt = "market looks efficient";
         if (call.lean === "yes") { cls = "up"; txt = "APEX leans YES (" + apex + "% vs " + crowd + "%)"; }
         else if (call.lean === "no") { cls = "down"; txt = "APEX leans NO (" + apex + "% vs " + crowd + "%)"; }
