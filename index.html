@@ -173,7 +173,7 @@
     }
   }
 
-  async function checkReturnFromStripe() {
+    async function checkReturnFromStripe() {
     const params = new URLSearchParams(window.location.search);
     const sid = params.get("paid");
     if (!sid) return;
@@ -182,13 +182,14 @@
       const data = await res.json();
       if (data.paid) {
         localStorage.setItem("apexPaid", "true");
+        localStorage.setItem("apexSession", sid);
         out.className = "out show";
         out.textContent = "✓ Payment confirmed — you now have unlimited access. Enjoy.";
       }
     } catch (e) { /* ignore */ }
     window.history.replaceState({}, "", window.location.pathname);
     render();
-  }
+    }
 
   function render() {
     if (isPaid() || briefsUsed() < FREE_LIMIT) {
