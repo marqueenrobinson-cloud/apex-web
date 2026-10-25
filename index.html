@@ -211,7 +211,7 @@
     }
   }
 
-  async function getBrief() {
+    async function getBrief() {
     const sym = input.value.trim();
     if (!sym) { input.focus(); return; }
 
@@ -220,7 +220,16 @@
     out.textContent = "Thinking…";
 
     try {
-      const res = await fetch(API + "/demo?symbol=" + encodeURIComponent(sym));
+      const sid = localStorage.getItem("apexSession");
+      const res = await fetch(API + "/demo?symbol=" + encodeURIComponent(sym), {
+        headers: sid ? { "X-Session-Id": sid } : {}
+      });
+      if (res.status === 429 || res.status === 503) {
+        let msg = "You've hit today's limit. Try again tomorrow.";
+        try { const j = await res.json(); if (j.detail) msg = j.detail; } catch (e) {}
+        out.textContent = msg;
+        return;
+      }
       if (!res.ok) throw new Error("Server returned " + res.status);
       const data = await res.json();
       out.textContent = data.brief || "No brief came back.";
@@ -232,7 +241,7 @@
       btn.disabled = false;
       render();
     }
-  }
+    }
 
   async function startCheckout() {
     btn.disabled = true;
