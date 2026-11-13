@@ -1,0 +1,24 @@
+# APEX
+
+> AI market briefs for any stock or coin (e.g. NVDA, BTC) that AI agents can buy per call: $0.50 in USDC on Base via the x402 payment standard. No account or API key. Wallets holding 10,000+ $APEX on Base get free access.
+
+API base: https://web-production-8a4a.up.railway.app
+
+## Endpoints
+
+- [GET /brief?symbol=SYMBOL](https://web-production-8a4a.up.railway.app/brief?symbol=BTC): Paid brief, $0.50 USDC on Base. Returns HTTP 402 with x402 payment details until paid.
+- [GET /brief/any?symbol=SYMBOL](https://web-production-8a4a.up.railway.app/brief/any?symbol=BTC): Free for verified $APEX holders, otherwise redirects to the paid route.
+- [GET /brief/holder?symbol=SYMBOL](https://web-production-8a4a.up.railway.app/brief/holder?symbol=BTC): Free for wallets holding 10,000+ $APEX. Headers: X-Wallet-Address, X-Wallet-Message (URL-encoded "APEX access\nWallet: <address>\nTime: <ms>"), X-Wallet-Signature. Signatures valid 5 minutes.
+- [GET /demo?symbol=SYMBOL](https://web-production-8a4a.up.railway.app/demo?symbol=BTC): Free, rate-limited demo.
+- [GET /openapi.json](https://web-production-8a4a.up.railway.app/openapi.json): OpenAPI spec.
+
+## Response
+
+JSON: {"symbol", "access", "brief"}. The brief has SNAPSHOT, NUMBERS, RISK CHECK, BOTTOM LINE, and a CALL object with asset, lens, direction, confidence, horizon_days. Calls are scored against outcomes over time.
+
+## Docs
+
+- [APEX for AI Agents](https://apex-web-omega.vercel.app/agents.html): Human-readable guide.
+
+$APEX token on Base: 0xc97e3883E0b64f0dEb44131959ab645afa452B07
+Briefs are research, not financial advice.
